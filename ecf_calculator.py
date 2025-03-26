@@ -85,7 +85,6 @@ def preprocess_data():
         scheduler=m.get,
         resources={"cores": 1},
         resources_mode=None,
-        prune_files=True,
         worker_transfers=True,
     )[0]
 
