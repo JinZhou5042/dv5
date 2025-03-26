@@ -34,7 +34,7 @@ Each sub-dataset directory should contain the input ROOT files.
 - To create new sub-datasets:
   1. Simply copy an existing sub-dataset directory
   2. Rename it to your desired name
-  3. The new sub-dataset will be automatically included in the next preprocessing
+  3. The new sub-dataset will be automatically included in the next preprocessing (make sure to re-preprocess)
 
 ## Usage
 
