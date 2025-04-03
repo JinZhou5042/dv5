@@ -16,6 +16,7 @@ import warnings
 from variable_functions import *
 import scipy
 import sys
+import cloudpickle
 
 full_start = time.time()
 
@@ -336,54 +337,56 @@ def get_tasks():
         print("Error: samples_ready.json not found!")
         print("Please run the script with --preprocess parameter first to prepare the data.")
         sys.exit(1)
-    
-    with open("samples_ready.json", 'r') as fin:
+
+
+    with open("samples_ready.json", "r") as fin:
         samples_ready = json.load(fin)
+
+    filtered_samples = {}
+    for dataset, info in samples_ready.items():
+        files = info.get("files", {})
+        existing_files = {
+            path: meta for path, meta in files.items() if os.path.exists(path)
+        }
+        if existing_files:
+            filtered_samples[dataset] = {
+                "files": existing_files,
+                "form": info["form"],
+                "metadata": info["metadata"],
+            }
+
+    if not filtered_samples:
+        print("Error: no valid files found in any dataset.")
+        sys.exit(1)
     
     if args.all:
-        tasks = dataset_tools.apply_to_fileset(
+        return dataset_tools.apply_to_fileset(
             analysis,
-            samples_ready, ## Run over all subsamples in input_datasets.json
+            filtered_samples,
             uproot_options={"allow_read_errors_with_report": False},
-            schemaclass = PFNanoAODSchema,
-        )
-    else:
-        subset = {}
-
-        print(f"Samples ready:")
-        for key, value in samples_ready.items():
-            print(key, len(value['files']))
-
-        if args.sub_dataset not in samples_ready:
-            print(f"Error: Sub-dataset '{args.sub_dataset}' not found in available samples!")
-            print("Use --show-samples to see available sub-datasets.")
-            sys.exit(1)
-
-        print(f"Using sub-dataset: {args.sub_dataset}")
-
-        subset[args.sub_dataset] = samples_ready[args.sub_dataset]
-        files = subset[args.sub_dataset]['files']
-        form = subset[args.sub_dataset]['form']
-        dict_meta = subset[args.sub_dataset]['metadata']
-        keys = list(files.keys())
-
-        batch = {}
-        batch[args.sub_dataset] = {}
-        batch[args.sub_dataset]['files'] = {}
-        batch[args.sub_dataset]['form'] = form
-        batch[args.sub_dataset]['metadata'] = dict_meta
-
-        for i in range(len(files)):
-            batch[args.sub_dataset]['files'][keys[i]] = files[keys[i]]
-
-        tasks = dataset_tools.apply_to_fileset(
-            analysis,
-            batch, ## Run over only the subsample specified by --sub-dataset
-            uproot_options={"allow_read_errors_with_report": False},
-            schemaclass = PFNanoAODSchema,
+            schemaclass=PFNanoAODSchema,
         )
 
-    return tasks
+    if args.sub_dataset not in filtered_samples:
+        print(f"Error: Sub-dataset '{args.sub_dataset}' not found or all its files are missing!")
+        print("Use --show-samples to see available sub-datasets.")
+        sys.exit(1)
+
+    print("Samples ready:")
+    for name, item in filtered_samples.items():
+        print(name, len(item["files"]))
+
+    print(f"Using sub-dataset: {args.sub_dataset}")
+    subset = {
+        args.sub_dataset: filtered_samples[args.sub_dataset]
+    }
+
+    return dataset_tools.apply_to_fileset(
+        analysis,
+        subset,
+        uproot_options={"allow_read_errors_with_report": False},
+        schemaclass=PFNanoAODSchema,
+    )
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -393,18 +396,37 @@ if __name__ == "__main__":
     parser.add_argument('--all', action='store_true', help='Process all samples. Without this flag, only processes the specified sub-dataset')
     parser.add_argument('--show-samples', action='store_true', help='Show available samples and their file counts')
     parser.add_argument('--sub-dataset', type=str, default='hgg', help='Specify which sub-dataset to process (default: hgg)')
+    parser.add_argument('--checkpoint-to', type=str, help='Save tasks to the specified file path using cloudpickle')
+    parser.add_argument('--load-from', type=str, help='Load tasks from the specified file path instead of computing them')
     args = parser.parse_args()
+
+    # Check that checkpoint_to and load_from are not used together
+    if args.checkpoint_to and args.load_from:
+        print("Error: --checkpoint-to and --load-from cannot be used together.")
+        sys.exit(1)
 
     m = DaskVine(
         [9123, 9128],
         name=f"{os.environ['USER']}-hgg7",
         staging_path="/tmp/jin",
     )
+    
+    ## general
+#    m.tune("wait-for-workers", 32)
+#    m.tune("transient-error-interval", 1)
+#    m.tune("kill-worker-interval-s", 300)
+#    m.tune("worker-source-max-transfers", 10000)  
+    
+    ## fault tolerance
+    # replication
+    m.tune("temp-replica-count", 1)
+    # checkpointing
+#    m.tune("temp-file-checkpoint", 1)
+#    m.tune("checkpoint-threshold", 15)
 
-    m.tune("temp-replica-count", 3)
-    m.tune("transfer-temps-recovery", 1)
-    # m.tune("wait-for-workers", 50)
-    # m.tune("transient-error-interval", 1)
+    ## scalability
+    #m.tune("transfer-temps-recovery", 1)
+    pruning_depth = 0
 
     warnings.filterwarnings("ignore", "Found duplicate branch")
     warnings.filterwarnings("ignore", "Missing cross-reference index for")
@@ -432,7 +454,16 @@ if __name__ == "__main__":
 
     print(f"====== Getting tasks")
 
-    tasks = get_tasks()
+    if args.load_from:
+        print(f"Loading tasks from {args.load_from}")
+        with open(args.load_from, 'rb') as f:
+            tasks = cloudpickle.load(f)
+    else:
+        tasks = get_tasks()
+        if args.checkpoint_to:
+            print(f"Saving tasks to {args.checkpoint_to}")
+            with open(args.checkpoint_to, 'wb') as f:
+                cloudpickle.dump(tasks, f)
 
     print(f"====== Starting compute")
 
@@ -440,11 +471,14 @@ if __name__ == "__main__":
             tasks,
             scheduler=m.get,
             resources_mode=None,
-            prune_depth=2,
-            scheduling_mode='largest-input-first',
+            prune_depth=pruning_depth,
+            scheduling_mode="LIFO",
             worker_transfers=True,
             resources={"cores": 1},
+            lib_resources={'cores': 20, 'slots': 20},
+            task_mode="function-calls",
         )
-    
-    full_stop = time.time()
-    print('full run time is ' + str((full_stop - full_start)/60))
+   
+    execution_time = round(time.time() - m.when_first_task_completed, 2)
+    print(f"execution time is: {execution_time}s")  
+
