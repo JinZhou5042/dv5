@@ -321,7 +321,7 @@ def analysis(events):
             depth_limit=1,
         )
        
-    output_path = f"ecf_calculator_output/{dataset}/"
+    output_path = f"output/{dataset}/"
     os.makedirs(output_path, exist_ok=True)
     
     skim_task = dak.to_parquet(
@@ -388,7 +388,73 @@ def get_tasks():
         schemaclass=PFNanoAODSchema,
     )
 
+def ensure_template(template_name, base_path):
+    """
+    Ensure a template directory exists, handling existing directories appropriately.
+    
+    Args:
+        template_name: Name of the template (must not contain '/')
+        base_path: Base path where the template directory should be created
+        
+    Returns:
+        template_name if successful, empty string if no template is used
+    """
+    if not template_name:
+        return ""
+        
+    # Validate template doesn't contain slashes
+    if '/' in template_name:
+        print("Error: Template name cannot contain '/' character.")
+        sys.exit(1)
+        
+    # Create base path if it doesn't exist
+    if not os.path.exists(base_path):
+        try:
+            os.makedirs(base_path, exist_ok=True)
+            print(f"Created base path directory: {base_path}")
+        except Exception as e:
+            print(f"Error creating base directory: {e}")
+            sys.exit(1)
+        
+    template_dir = os.path.join(base_path, template_name)
+    
+    # Check if the template directory already exists
+    if os.path.exists(template_dir):
+        # If enforce-template is set, delete without asking
+        if args.enforce_template:
+            try:
+                shutil.rmtree(template_dir)
+                print(f"Enforced: Deleted existing template directory: {template_dir}")
+            except Exception as e:
+                print(f"Error deleting directory: {e}")
+                sys.exit(1)
+        else:
+            # Otherwise, ask for confirmation
+            response = input(f"Template directory '{template_dir}' already exists. Delete it? (Y/y to confirm): ")
+            if response.lower() == 'y':
+                try:
+                    shutil.rmtree(template_dir)
+                    print(f"Deleted existing template directory: {template_dir}")
+                except Exception as e:
+                    print(f"Error deleting directory: {e}")
+                    sys.exit(1)
+            else:
+                print("Operation cancelled. Please use a different template name.")
+                sys.exit(1)
+    
+    # Create the template directory
+    try:
+        os.makedirs(template_dir, exist_ok=True)
+        print(f"Created template directory: {template_dir}")
+    except Exception as e:
+        print(f"Error creating directory: {e}")
+        sys.exit(1)
+        
+    return template_name
+
 if __name__ == "__main__":
+    user_name = os.environ['USER']
+
     parser = argparse.ArgumentParser()
     parser.add_argument('--create', action='store_true', help='')
     parser.add_argument('--preprocess', action='store_true', help='')
@@ -398,35 +464,93 @@ if __name__ == "__main__":
     parser.add_argument('--sub-dataset', type=str, default='hgg', help='Specify which sub-dataset to process (default: hgg)')
     parser.add_argument('--checkpoint-to', type=str, help='Save tasks to the specified file path using cloudpickle')
     parser.add_argument('--load-from', type=str, help='Load tasks from the specified file path instead of computing them')
+    parser.add_argument('--manager-name', type=str, default=f"{user_name}-hgg7", help='Set the manager name (default: {user}-hgg7)')
+
+    # Determine default run_info_path based on username
+    if user_name == 'jzhou24':
+        default_run_path = f"/users/{user_name}/afs/taskvine-report-tool/logs"
+        default_help_text = 'Directory to store TaskVine run logs and reports. Defaults to specific AFS path for user jzhou24, falls back to ./vine-run-info if inaccessible.'
+    else:
+        default_run_path = "vine-run-info"
+        default_help_text = 'Directory to store TaskVine run logs and reports. Defaults to ./vine-run-info. Falls back to ./vine-run-info if specified path is inaccessible.'
+
+    parser.add_argument('--run-info-path', type=str, 
+                        default=default_run_path, 
+                        help=default_help_text)
+    parser.add_argument('--template', type=str, help='Template name to use for run_info_template (will be created as a folder under run_info_path)')
+    parser.add_argument('--enforce-template', action='store_true', help='Force overwrite template directory without confirmation')
+    parser.add_argument('--wait-for-workers', type=int, help='Number of seconds to wait for workers')
+    
+    parser.add_argument('--enforce-worker-eviction-interval', type=int, help='Interval in seconds for worker eviction to test fault tolerance')
+
+    parser.add_argument('--temp-replica-count', type=int, default=1, help='Sets the replication count for temp files')
+    parser.add_argument('--checkpoint-threshold', type=int, default=30, help='Set the checkpoint threshold in seconds (default: 30)')
+
+    parser.add_argument('--load-balancing', action='store_true', help='Enable load balancing')
+    parser.add_argument('--load-balancing-interval', type=int, default=3, help='Balance worker load interval in seconds (default: 3)')
+    parser.add_argument('--load-balancing-factor', type=float, default=1.1, help='the gap between the max and min load (default: 1.1)')
+
+    parser.add_argument('--prune-depth', type=int, default=0, help='Set the pruning depth (default: 0)')
+    parser.add_argument('--scheduling-mode', type=str, default='LIFO', help='Set the scheduling mode (default: LIFO)')
+
+    parser.add_argument('--max-workers', type=int, default=30000, help='Set the maximum worker count (default: 30000)')
+    parser.add_argument('--merge-chains', action='store_true', help='Merge chains')
+
     args = parser.parse_args()
 
     # Check that checkpoint_to and load_from are not used together
     if args.checkpoint_to and args.load_from:
         print("Error: --checkpoint-to and --load-from cannot be used together.")
         sys.exit(1)
+    
+    # Handle the template argument using the ensure_template function
+    run_info_template = ensure_template(args.template, args.run_info_path)
 
     m = DaskVine(
         [9123, 9128],
-        name=f"{os.environ['USER']}-hgg7",
-        staging_path="/tmp/jin",
+        name=args.manager_name,
+        run_info_path=args.run_info_path,
+        run_info_template=run_info_template,
+        staging_path="/tmp/jzhou",
     )
     
     ## general
-#    m.tune("wait-for-workers", 32)
-#    m.tune("transient-error-interval", 1)
-#    m.tune("kill-worker-interval-s", 300)
-#    m.tune("worker-source-max-transfers", 10000)  
+    if args.wait_for_workers:
+        m.tune("wait-for-workers", args.wait_for_workers)
+    if args.max_workers:
+        m.tune("max-workers", args.max_workers)
+    m.tune("max-retrievals", 10)
+    m.tune("transient-error-interval", 1)
+    m.tune("worker-source-max-transfers", 10000)
+    m.tune("transfer-temps-recovery", 0)
     
-    ## fault tolerance
-    # replication
-    m.tune("temp-replica-count", 1)
-    # checkpointing
-#    m.tune("temp-file-checkpoint", 1)
-#    m.tune("checkpoint-threshold", 15)
+    # m.tune("max-retrievals", -1)
+    m.tune("attempt-schedule-depth", 100)
 
-    ## scalability
-    #m.tune("transfer-temps-recovery", 1)
-    pruning_depth = 0
+    ## kill workers periodically to test fault tolerance
+    if args.enforce_worker_eviction_interval:
+        print(f"Enforcing worker eviction interval of {args.enforce_worker_eviction_interval} seconds")
+        m.tune("enforce-worker-eviction-interval", args.enforce_worker_eviction_interval)
+    m.tune("watch-library-logfiles", 1)
+
+    m.tune("temp-replica-count", args.temp_replica_count)        # replication    
+    m.tune("checkpoint-threshold", args.checkpoint_threshold)    # checkpoint threshold
+
+    # m.tune("task-groups", 1)
+    
+    if args.merge_chains:
+        merge_chains = True
+    else:
+        merge_chains = False
+
+    # load balancing
+    if args.load_balancing:
+        m.tune("load-balancing", 1)
+        m.tune("load-balancing-interval", args.load_balancing_interval)
+        m.tune("load-balancing-factor", args.load_balancing_factor)
+
+    # storage consumption
+    # no special tuning for storage consumption
 
     warnings.filterwarnings("ignore", "Found duplicate branch")
     warnings.filterwarnings("ignore", "Missing cross-reference index for")
@@ -471,11 +595,12 @@ if __name__ == "__main__":
             tasks,
             scheduler=m.get,
             resources_mode=None,
-            prune_depth=pruning_depth,
-            scheduling_mode="LIFO",
+            prune_depth=args.prune_depth,
+            scheduling_mode=args.scheduling_mode,
             worker_transfers=True,
+            # merge_chains=merge_chains,
             resources={"cores": 1},
-            lib_resources={'cores': 20, 'slots': 20},
+            lib_resources={'cores': 16, 'slots': 16},
             task_mode="function-calls",
         )
    
