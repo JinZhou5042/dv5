@@ -600,6 +600,7 @@ if __name__ == "__main__":
             worker_transfers=True,
             # merge_chains=merge_chains,
             resources={"cores": 1},
+            # worker_scheduler="files",
             lib_resources={'cores': 16, 'slots': 16},
             task_mode="function-calls",
         )
