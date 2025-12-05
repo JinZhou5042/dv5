@@ -36,7 +36,7 @@ def handle_wrapper_output(wrapper_output):
 
 def preprocess_data():
     print(f"====== Preprocessing data")
-    samples_path = '/project01/ndcms/jzhou24/samples'  ## Change this path to where data is
+    samples_path = '/groups/dthain/users/jzhou24/dv5-input-samples'  ## Change this path to where data is
     
     filelist = {}
     categories = os.listdir(samples_path)
@@ -464,7 +464,7 @@ if __name__ == "__main__":
     parser.add_argument('--sub-dataset', type=str, default='hgg', help='Specify which sub-dataset to process (default: hgg)')
     parser.add_argument('--checkpoint-to', type=str, help='Save tasks to the specified file path using cloudpickle')
     parser.add_argument('--load-from', type=str, help='Load tasks from the specified file path instead of computing them')
-    parser.add_argument('--manager-name', type=str, default=f"{user_name}-hgg7", help='Set the manager name (default: {user}-hgg7)')
+    parser.add_argument('--manager-name', type=str, default=f"dv5-manager", help='Set the manager name (default: dv5-manager)')
 
     # Determine default run_info_path based on username
     if user_name == 'jzhou24':
@@ -480,19 +480,9 @@ if __name__ == "__main__":
     parser.add_argument('--template', type=str, help='Template name to use for run_info_template (will be created as a folder under run_info_path)')
     parser.add_argument('--enforce-template', action='store_true', help='Force overwrite template directory without confirmation')
     parser.add_argument('--wait-for-workers', type=int, help='Number of seconds to wait for workers')
-    
     parser.add_argument('--enforce-worker-eviction-interval', type=int, help='Interval in seconds for worker eviction to test fault tolerance')
-
     parser.add_argument('--temp-replica-count', type=int, default=1, help='Sets the replication count for temp files')
-    parser.add_argument('--checkpoint-threshold', type=int, default=30, help='Set the checkpoint threshold in seconds (default: 30)')
-
-    parser.add_argument('--load-balancing', action='store_true', help='Enable load balancing')
-    parser.add_argument('--load-balancing-interval', type=int, default=3, help='Balance worker load interval in seconds (default: 3)')
-    parser.add_argument('--load-balancing-factor', type=float, default=1.1, help='the gap between the max and min load (default: 1.1)')
-
     parser.add_argument('--prune-depth', type=int, default=0, help='Set the pruning depth (default: 0)')
-    parser.add_argument('--scheduling-mode', type=str, default='LIFO', help='Set the scheduling mode (default: LIFO)')
-
     parser.add_argument('--max-workers', type=int, default=30000, help='Set the maximum worker count (default: 30000)')
     parser.add_argument('--merge-chains', action='store_true', help='Merge chains')
 
@@ -534,7 +524,6 @@ if __name__ == "__main__":
     m.tune("watch-library-logfiles", 1)
 
     m.tune("temp-replica-count", args.temp_replica_count)        # replication    
-    m.tune("checkpoint-threshold", args.checkpoint_threshold)    # checkpoint threshold
 
     # m.tune("task-groups", 1)
     
@@ -596,7 +585,6 @@ if __name__ == "__main__":
             scheduler=m.get,
             resources_mode=None,
             prune_depth=args.prune_depth,
-            scheduling_mode=args.scheduling_mode,
             worker_transfers=True,
             # merge_chains=merge_chains,
             resources={"cores": 1},

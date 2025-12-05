@@ -1,0 +1,10 @@
+{
+    "manager-name": "dv5-manager",
+    "max-workers": 20,
+    "min-workers": 20,
+    "workers-per-cycle": 20,
+    "cores": 16,
+    "memory": 16*1024,
+    "disk": 200*1024,
+    "timeout": 36000
+}

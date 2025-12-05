@@ -8,9 +8,9 @@ Framework for calculating Energy Correlation Functions (ECFs) and other jet subs
 
 ```bash
 unset PYTHONPATH
-# Create conda environment 'dv5' with Python 3.10
-conda create -y -n dv5 -c conda-forge --strict-channel-priority python=3.10
-conda activate dv5
+# Create conda environment 'dv5-env' with Python 3.10
+conda create -y -n dv5-env -c conda-forge --strict-channel-priority python=3.10
+conda activate dv5-env
 # Install build requirements for cctools
 conda install -y gcc_linux-64 gxx_linux-64 gdb m4 perl swig make zlib libopenssl-static openssl conda-pack packaging cloudpickle flake8 clang-format threadpoolctl
 ```
@@ -21,18 +21,16 @@ Build and install the required version of cctools:
 
 ```bash
 # Clone the repository
-git clone https://github.com/JinZhou5042/cctools.git
+git clone https://github.com/cooperative-computing-lab/cctools.git
 cd cctools
-# Fetch the specific branch
-git fetch origin sc25
-git switch sc25
 # Configure cctools for the active conda environment
 ./configure --with-base-dir $CONDA_PREFIX --prefix $CONDA_PREFIX
 # Build and install
 make -j8 && make install
 # Verify installation
 vine_worker --version
-cd .. # Return to the main project directory
+# Return to the main project directory
+cd ..
 ```
 
 ### 3. Install Python Packages
@@ -48,8 +46,7 @@ pip install dask==2024.7.1 dask-awkward==2024.7.0 awkward==2.6.6 coffea==2024.4.
 
 Clone this repository to your shared filesystem:
 ```bash
-git clone https://github.com/JinZhou5042/sc25.git
-cd sc25
+git clone https://github.com/JinZhou5042/dv5.git
 ```
 
 ### 2. Package Conda Environment for TaskVine Workers
@@ -59,6 +56,7 @@ Create a poncho package of the conda environment for TaskVine workers. Run this 
 ```bash
 # Ensure you are on a shared filesystem
 # Package the 'dv5' conda environment
+cd dv5
 poncho_package_create $CONDA_PREFIX dv5.tar.gz
 ```
 *This might take some time.*
@@ -67,7 +65,7 @@ poncho_package_create $CONDA_PREFIX dv5.tar.gz
 
 The `factory.json` file defines resource requirements (cores, memory, disk) for TaskVine workers.
 
--   Review and adjust `factory.json` for your computing environment.
+-   Review and adjust `factory.json` under this directory.
 -   If you modify `cores` in `factory.json`, update `lib_resources` in `ecf_calculator.py` accordingly: `lib_resources={'cores': N}` where `N` matches `factory.json`.
 
 ### 4. Start TaskVine Workers
@@ -94,19 +92,9 @@ samples/
 │   └── file3.root
 └── ...
 ```
--   **Default Path:** The script defaults to an example path like `/project01/ndcms/jzhou24/samples`. You will likely need to modify the `samples_path` variable inside `ecf_calculator.py` if your data resides elsewhere.
+-   **Default Path:** The script defaults to an example path `/groups/dthain/users/jzhou24/dv5-input-samples`. You will likely need to modify the `samples_path` variable inside `ecf_calculator.py` if your data resides elsewhere.
 
-### 2. Download Input Data (Example)
-
-From the main project directory (`sc25`), run the provided script to download the necessary datasets. The script will place the data into the `samples/` subdirectory.
-
-```bash
-# Ensure you are in the 'sc25' project directory
-bash download_datasets.sh
-```
-This script handles the downloading and extraction of the required ROOT files.
-
-### 3. Dataset Management
+### 2. Dataset Management
 
 -   **Preprocessing Time:** Preprocessing (`--preprocess`) scans all files and can be slow with many datasets.
 -   **Selective Preprocessing:** Temporarily move unused dataset directories out of the main data directory before running `--preprocess` to speed it up.
@@ -153,52 +141,20 @@ python ecf_calculator.py [options]
     python ecf_calculator.py --ecf-upper-bound 5 --all
     ```
 
-### Task Checkpointing (Recommended for Batch Runs / Re-runs)
-
-Separate task graph generation from execution.
-
-1.  **Generate and Save Task Graph:**
-    Add `--checkpoint-to <filename.pkl>` to an analysis command. Saves the graph without execution.
-    ```bash
-    # Generate tasks for all datasets (ECF n<=5) and save
-    python ecf_calculator.py --all --ecf-upper-bound 5 --checkpoint-to tasks.pkl
-    ```
-
-2.  **Load and Execute Task Graph:**
-    Use `--load-from <filename.pkl>` instead of dataset selection arguments.
-    ```bash
-    # Load the graph and execute
-    python ecf_calculator.py --load-from tasks.pkl --temp-replica-count 2
-    ```
-    *`--checkpoint-to` and `--load-from` are mutually exclusive.*
-
 ### DaskVine Configuration Arguments
 
 Fine-tune TaskVine interaction during task execution.
 
-**Manager Connection & Run Logging:**
-
--   `--manager-name <name>`: Connect to a specific TaskVine manager (default: `{user}-hgg7`).
+-   `--manager-name <name>`: Connect to a specific TaskVine manager (default: `dv5-manager`).
 -   `--run-info-path <path>`: Directory for TaskVine logs/reports. The script may default to a pre-configured shared path (e.g., on AFS) if available and writable in certain environments, otherwise it defaults to `./vine-run-info`. If the specified or default path is inaccessible, it falls back to `./vine-run-info`.
 -   `--template <template_name>`: Create a subdirectory `<template_name>` within the effective `run_info_path` for logs/reports.
 -   `--enforce-template`: Overwrite the `--template` directory if it exists.
-
-**General Tuning:**
-
 -   `--wait-for-workers <seconds>`: Wait time for workers before starting.
 -   `--max-workers <count>`: Limit max workers (default: unlimited).
-
-**Fault Tolerance:**
-
 -   `--temp-replica-count <count>`: Number of replicas for intermediate files (default: 1).
--   `--checkpoint-threshold <seconds>`: Min time (s) before considering checkpointing intermediate results (default: 30).
 -   `--enforce-worker-eviction-interval <seconds>`: **Testing only.** Force worker eviction periodically.
-
-**Performance & Scheduling:**
-
 -   `--load-balancing`: Enable dynamic load balancing.
 -   `--prune-depth <depth>`: Dask graph pruning depth (default: 0).
--   `--scheduling-mode <mode>`: Task scheduling strategy (default: `LIFO`).
 
 ### Examples
 
@@ -215,19 +171,6 @@ Fine-tune TaskVine interaction during task execution.
     python ecf_calculator.py --sub-dataset hgg_2 --ecf-upper-bound 6
     ```
 
-3.  **Workflow using Checkpointing:**
-    ```bash
-    # 1. Preprocess (if needed)
-    python ecf_calculator.py --preprocess
-    # 2. Generate and save task graph
-    python ecf_calculator.py --all --ecf-upper-bound 5 --checkpoint-to tasks.pkl
-    # 3. Load graph and run
-    python ecf_calculator.py --load-from tasks.pkl --temp-replica-count 3 --template run_rep3 --manager-name my-manager
-    ```
-
-4.  **Batch Experiments:**
-    See `run_batch_*.sh` scripts for examples using `--load-from` and iterating through tuning parameters with `--template` for log separation.
-
 ## Output
 
 Analysis results (parquet files) are saved in `output/`, organized by dataset:
@@ -241,57 +184,6 @@ output/
 │   └── ...
 └── ...
 ```
-
-## Running Paper Experiments
-
-The following batch scripts correspond to the experiments presented in the accompanying paper. They are designed to test different aspects of TaskVine's performance and fault tolerance features.
-
-**Prerequisite:** Before running any batch script, ensure you have generated the necessary task graph file (typically `tasks.pkl`). This is done using the `--checkpoint-to` argument with `ecf_calculator.py`, for example:
-
-```bash
-# Generate tasks for all datasets (ECF n<=5) and save to tasks.pkl
-python ecf_calculator.py --all --ecf-upper-bound 5 --checkpoint-to tasks.pkl
-```
-
-### 1. Checkpointing and Replication Experiments
-
-These scripts evaluate TaskVine's checkpointing mechanism and data replication for fault tolerance.
-
-```bash
-# Run replication experiments (varying --temp-replica-count)
-bash run_batch_replication.sh
-
-# Run checkpointing experiments (varying --checkpoint-threshold)
-bash run_batch_checkpoint.sh
-```
-
-### 2. Load Balancing Experiment
-
-This script tests the dynamic load balancing feature.
-
-```bash
-# Run load balancing experiment (enabling --load-balancing)
-bash run_batch_load_balancing.sh
-```
-
-### 3. Storage Consumption Experiment
-
-This script investigates aspects related to storage usage during computation.
-
-```bash
-# Run storage consumption related experiment
-bash run_batch_storage_consumption.sh
-```
-Each batch script will typically run `ecf_calculator.py` multiple times with different tuning parameters, loading the task graph from `tasks.pkl` and using the `--template` argument to organize logs for each specific run configuration within the TaskVine run info directory.
-
-### 4. Analyzing Experiment Results
-
-After running the batch experiments, use the provided Jupyter notebooks to visualize the results:
-
--   **`analyze_fault_tolerance.ipynb`:** Use this notebook to plot and analyze the results from the checkpointing and replication experiments (`run_batch_checkpoint.sh`, `run_batch_replication.sh`).
--   **`analyze_storage_consumption.ipynb`:** Use this notebook to plot and analyze the results from the storage consumption experiment (`run_batch_storage_consumption.sh`).
-
-Ensure your Jupyter environment has access to the necessary Python packages (like matplotlib, pandas, etc.) and can read the log files generated by the batch runs within the TaskVine run info directory (specified by `--run-info-path` and organized by `--template`).
 
 ## Important Notes
 
